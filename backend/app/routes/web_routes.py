@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, field_validator
 from urllib.parse import urlparse
 
-from app.services.scraper_service      import search_from_url
+from app.services.scraper_service       import search_from_url
 from app.services.summarisation_service import summarise, translate_only, SUPPORTED_LANGUAGES
 from app.core.auth import get_current_user
 
@@ -11,24 +11,16 @@ router = APIRouter(prefix="/web", tags=["web-search"])
 
 # ── Validation ─────────────────────────────────────────────────────────────
 
-ALLOWED_DOMAINS = [
-    "docs.oracle.com",
-    "www.oracle.com",
-    "oracle.com",
-]
-
 def _validate_url(url: str) -> str:
     url = url.strip()
     if not url:
         raise ValueError("URL cannot be empty")
     try:
         parsed = urlparse(url)
-        if not parsed.scheme in ("http", "https"):
+        if parsed.scheme not in ("http", "https"):
             raise ValueError("URL must start with http:// or https://")
-        domain = parsed.netloc.lower().replace("www.", "")
-        allowed = any(domain == d.replace("www.", "") or domain.endswith("." + d.replace("www.", "")) for d in ALLOWED_DOMAINS)
-        if not allowed:
-            raise ValueError(f"Only Oracle documentation URLs are allowed (docs.oracle.com). Got: {parsed.netloc}")
+        if not parsed.netloc:
+            raise ValueError("Invalid URL — missing domain")
     except ValueError:
         raise
     except Exception:
@@ -83,23 +75,29 @@ class TranslateRequest(BaseModel):
 @router.post("/ask_web")
 def ask_web(body: WebSearchRequest, current_user: dict = Depends(get_current_user)):
     """
-    Scrape an Oracle docs URL, find the most relevant context for the
-    question, then summarise (and optionally translate) using Claude Haiku.
+    Accepts any publicly accessible URL including:
+    - Web pages (HTML)
+    - PDF files
+    - DOCX files
+    - Excel files (.xlsx / .xls)
+    - SharePoint shared links (publicly accessible)
 
     Flow:
-        1. Validate URL is Oracle domain
-        2. scraper_service: fetch → chunk → embed → rerank → return top context
-        3. summarisation_service: Claude Haiku → clean answer
-        4. If target_language != "en": translate in same call
+        1. Detect content type (HTML / PDF / DOCX / Excel)
+        2. Extract text using the appropriate extractor
+        3. Chunk → embed → rerank → top context
+        4. Claude Haiku → summarise + optionally translate
     """
-    # Step 1: Scrape and retrieve relevant context
     context = search_from_url(body.url, body.question)
 
-    # If scraper returned an error/no-answer message, return it directly
     no_answer_phrases = [
         "No Answer Found",
         "Could not fetch",
         "No usable content",
+        "Access denied",
+        "Page not found",
+        "extraction unavailable",
+        "extraction error",
     ]
     if any(phrase in context for phrase in no_answer_phrases):
         return {
@@ -109,7 +107,6 @@ def ask_web(body: WebSearchRequest, current_user: dict = Depends(get_current_use
             "context_preview": "",
         }
 
-    # Step 2: Summarise (and translate if needed) with Claude Haiku
     answer = summarise(context, body.question, body.target_language)
 
     return {
@@ -122,10 +119,6 @@ def ask_web(body: WebSearchRequest, current_user: dict = Depends(get_current_use
 
 @router.post("/translate")
 def translate(body: TranslateRequest, current_user: dict = Depends(get_current_user)):
-    """
-    Translate an existing answer to a different language.
-    Called when user clicks a language button after already receiving an answer.
-    """
     if not body.text.strip():
         raise HTTPException(status_code=422, detail="Text to translate cannot be empty")
 
@@ -140,7 +133,6 @@ def translate(body: TranslateRequest, current_user: dict = Depends(get_current_u
 
 @router.get("/languages")
 def get_languages(_: dict = Depends(get_current_user)):
-    """Return supported translation languages."""
     return {
         "languages": [
             {"code": code, "name": name}

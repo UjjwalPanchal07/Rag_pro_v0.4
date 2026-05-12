@@ -37,8 +37,8 @@ function WebSearch() {
   // Validate Oracle URL on blur
   const handleUrlBlur = () => {
     if (!url) { setUrlError(""); return; }
-    if (!url.includes("docs.oracle.com") && !url.includes("oracle.com")) {
-      setUrlError("Only Oracle documentation URLs are allowed (docs.oracle.com)");
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      setUrlError("URL must start with http:// or https://");
     } else {
       setUrlError("");
     }
@@ -48,8 +48,6 @@ function WebSearch() {
     setError(""); setUrlError("");
     if (!url.trim())      { setUrlError("Please enter an Oracle documentation URL"); return; }
     if (!question.trim()) { setError("Please enter a question"); return; }
-    if (!url.includes("oracle.com")) { setUrlError("Only Oracle documentation URLs are allowed"); return; }
-
     setLoading(true); setAnswer(""); setOriginalAnswer(""); setActiveLang("en");
 
     try {
@@ -124,7 +122,7 @@ function WebSearch() {
           {/* How it works banner */}
           <div style={{ display: "flex", gap: 0, marginBottom: 22, borderRadius: 12, overflow: "hidden", border: "1px solid rgba(14,165,233,0.2)" }}>
             {[
-              { n: "1", label: "Paste Oracle docs URL" },
+              { n: "1", label: "Paste any public URL or SharePoint link" },
               { n: "2", label: "Ask your question" },
               { n: "3", label: "Get AI-summarised answer" },
               { n: "4", label: "Translate if needed" },
@@ -149,7 +147,7 @@ function WebSearch() {
                 onChange={e => { setUrl(e.target.value); setUrlError(""); }}
                 onBlur={handleUrlBlur}
                 onKeyDown={e => { if (e.key === "Enter") handleSearch(); }}
-                placeholder="https://docs.oracle.com/en/industries/financial-services/..."
+                placeholder="https://docs.oracle.com/... or any public URL / SharePoint link"
                 className="question-input"
                 style={{ paddingLeft: 38, marginBottom: 0, borderColor: urlError ? "#ef4444" : "" }}
               />
@@ -160,7 +158,7 @@ function WebSearch() {
               </div>
             )}
             <p style={{ margin: "5px 0 0", fontSize: 12, color: "#9ca3af" }}>
-              Only Oracle documentation pages are accepted (docs.oracle.com)
+              Supports web pages, PDFs, DOCX, Excel and SharePoint shared links
             </p>
           </div>
 
@@ -293,7 +291,7 @@ function WebSearch() {
           {!loading && !answer && !error && (
             <div style={{ marginTop: 16 }}>
               <p className="answer-hint">
-                Paste an Oracle docs URL and enter your question to get an AI-summarised answer.
+                Paste any public URL (web page, PDF, DOCX, Excel, or SharePoint link) and ask your question.
               </p>
             </div>
           )}

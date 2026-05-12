@@ -1,15 +1,23 @@
 import os
 import pandas as pd
 from datetime import datetime
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill, Font
 
 from app.services.retrieval_service import search_answer_by_module
+
+# Red fill for unanswered cells
+_RED_FILL = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
+_RED_FONT = Font(color="CC0000", bold=True)
+
+NO_ANSWER_MARKER = "No Answer Found"
 
 
 def process_batch(input_path: str, run_dir: str):
     """
     Reads input.xlsx (No | Question | RFP Level Tag | Module | Answer),
-    fills the Answer column for each row by searching MongoDB,
-    saves output.xlsx in run_dir.
+    fills the Answer column by searching MongoDB,
+    marks unanswered cells with a red background in the output Excel.
 
     Returns (output_path, total_questions).
     """
@@ -41,14 +49,15 @@ def process_batch(input_path: str, run_dir: str):
     tag_col = col_map["rfp_level_tag"]
     mod_col = col_map["module"]
 
-    # Use existing Answer column if present, otherwise create it
     ans_col = col_map.get("answer", "Answer")
     if ans_col not in df.columns:
         df[ans_col] = ""
 
     # ── Fill answers row by row ────────────────────────────────────────────
-    answers = []
-    for _, row in df.iterrows():
+    answers      = []
+    unanswered   = []   # track 0-based row indices with no answer
+
+    for idx, (_, row) in enumerate(df.iterrows()):
         question      = str(row[q_col]).strip()
         rfp_level_tag = str(row[tag_col]).strip()
         module        = str(row[mod_col]).strip()
@@ -58,12 +67,41 @@ def process_batch(input_path: str, run_dir: str):
             continue
 
         answer = search_answer_by_module(rfp_level_tag, module, question)
-        answers.append(answer if answer else "No Answer Found")
+
+        if answer:
+            answers.append(answer)
+        else:
+            answers.append(NO_ANSWER_MARKER)
+            unanswered.append(idx)
 
     df[ans_col] = answers
 
+    # ── Save initial Excel via pandas ──────────────────────────────────────
     output_path = os.path.join(run_dir, "output.xlsx")
     df.to_excel(output_path, index=False)
 
-    print(f"[batch_service] Done. {len(df)} rows processed. Output: {output_path}")
+    # ── Apply red highlighting to unanswered cells via openpyxl ───────────
+    if unanswered:
+        wb  = load_workbook(output_path)
+        ws  = wb.active
+
+        # Find the answer column letter in the worksheet (1-indexed, header = row 1)
+        header_row  = [cell.value for cell in ws[1]]
+        try:
+            ans_col_idx = header_row.index(ans_col) + 1   # openpyxl is 1-indexed
+        except ValueError:
+            ans_col_idx = None
+
+        if ans_col_idx:
+            for row_idx in unanswered:
+                # row_idx is 0-based pandas index; +2 because Excel row 1 = header
+                excel_row = row_idx + 2
+                cell = ws.cell(row=excel_row, column=ans_col_idx)
+                cell.fill = _RED_FILL
+                cell.font = _RED_FONT
+
+        wb.save(output_path)
+
+    answered   = len(answers) - len(unanswered)
+    print(f"[batch_service] Done. {len(df)} rows | {answered} answered | {len(unanswered)} unanswered (highlighted red)")
     return output_path, len(df)
